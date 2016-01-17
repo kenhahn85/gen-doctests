@@ -1,0 +1,27 @@
+{
+  "name": "gen-js-doctests",
+  "version": "1.0.0",
+  "description": "",
+  "main": "generate-doctests.js",
+  "directories": {
+    "test": "tests"
+  },
+  "dependencies": {
+    "bluebird": "^2.9.34",
+    "boom": "^2.8.0",
+    "cryptiles": "^2.0.4",
+    "generate-function": "^2.0.0",
+    "generate-object-property": "^1.2.0",
+    "hoek": "^2.14.0",
+    "js-beautify": "^1.5.10",
+    "jsdoc-parse": "^1.2.6",
+    "request": "^2.61.0",
+    "sntp": "^1.0.9"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
