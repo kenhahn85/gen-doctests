@@ -1,7 +1,13 @@
 "use strict";
 
+// TODO: convert all sync actions to async
+// TODO: support @xExternalImports
+// TODO: import all exported members of the current file for a test
+// TODO: divvy up tests by function / class rather than file...OR create mechanism to de-dupe imports within a file and track them. the former will probably have fewer edge cases.
+// TODO: do not scan test files, i.e. add an excluded patterns arg
 const _ = require('lodash');
 const beautify = require('js-beautify').js_beautify;
+const del = require('del');
 const ESDoc = require('esdoc');
 const fs = require('fs');
 const invariant = require('invariant');
@@ -10,11 +16,13 @@ const mustache = require('mustache');
 const path = require('path');
 const XRegExp = require('xregexp');
 
-const ESDOC_CONFIG = {source: './tmp', destination: './doc'};
+const ESDOC_CONFIG = {source: './media/js', destination: './DOES NOT MATTER'};
 const IMPORT_REGEX = XRegExp('\\{(?<moduleName>[A-Za-z0-9_]+)\\}');
 
+// TODO: make this an argument to the exported method
+const TEST_DIR = './tests/js/doctests';
+
 const mustacheTemplates = {
-  // TODO: add default imports
   file: `
 // auto-generated test file
 {{{imports}}}
@@ -42,12 +50,24 @@ for(let k in mustacheTemplates) {
   mustache.parse(mustacheTemplates[k]);
 }
 
-class WritableTreeNode {}
+// TODO: improve this to look for last index of or something else
+// TODO: make this an argument to the script
+const BASE_JS_DIR = 'js/';
+function relativizeFileName(filename) {
+  return filename.slice(filename.indexOf(BASE_JS_DIR) + BASE_JS_DIR.length);
+}
+
+class WritableTreeNode {
+  isWritable() {
+    throw new Error('Not implemented.');
+  }
+}
 
 class File extends WritableTreeNode {
   constructor(data) {
     super();
-    this.filename = data.name.slice(0, -3);
+    invariant(data.name.endsWith('.js'), 'Only JS files are allowed.');
+    this.filename = data.name.endsWith('.es6.js') ? data.name.slice(0, -7) : data.name.slice(0, -3);
     this.defaultNode = null;
     this.nodes = [];
   }
@@ -58,6 +78,9 @@ class File extends WritableTreeNode {
 
   addNode(node) {
     invariant(node instanceof Exportable, "can only add Exportable's to File syntax trees")
+    if (!node.isWritable()) {
+      return;
+    }
     if (node.isDefaultExport) {
       this.defaultNode = node;
     } else {
@@ -65,12 +88,16 @@ class File extends WritableTreeNode {
     }
   }
 
+  // TODO: refactor this method so the extra condition is not required
   isWritable() {
     return this.defaultNode || this.nodes.length;
   }
 
   getTestFilename() {
-    return `tests/${this.filename}-auto-generated.es6.js`;
+    const parts = this.filename.split('/');
+    const filename = parts.pop();
+    const path = parts.join('/');
+    return `${TEST_DIR}/${path}/test_${filename}-auto-generated.es6.js`;
   }
 
   write () {
@@ -78,8 +105,15 @@ class File extends WritableTreeNode {
       return null;
     }
 
+    const moduleBlocks = this.nodes
+      .map(v => v.write());
+
+    moduleBlocks.push(this.defaultNode.write());
+
+    if (!moduleBlocks.length) {
+      return null;
+    }
     const imports = this.writeImportsLine();
-    const moduleBlocks = this.nodes.map(v => v.write());
     const code = mustache.render(mustacheTemplates.file, {
       imports: imports,
       moduleBlocks: moduleBlocks
@@ -88,12 +122,10 @@ class File extends WritableTreeNode {
       indent_size: 2
     });
   }
-  
+
   writeToFile() {
     const contents = this.write();
-    if (!contents) {
-      return;
-    } else {
+    if (contents) {
       const testFileName = this.getTestFilename();
       mkdirp.sync(path.dirname(testFileName));
       fs.writeFileSync(testFileName, contents);
@@ -119,8 +151,7 @@ class File extends WritableTreeNode {
       importsLine += '}';
     }
 
-    // TODO: normalize this filename based on root dir of webpack/browserify
-    importsLine += ` from '${this.filename}';`;
+    importsLine += ` from '${relativizeFileName(this.filename)}';`;
 
     return importsLine;
   }
@@ -144,14 +175,6 @@ class Exportable extends WritableTreeNode {
     this.moduleName = Exportable.computeModuleName(data);
   }
 
-  static build(klass, nodeData) {
-    if (!nodeData.export) {
-      return null;
-    } else {
-      return new klass(nodeData);
-    }
-  }
-
   static computeModuleName(data) {
     return data.longname;
   }
@@ -163,6 +186,10 @@ class Func extends Exportable {
     this.afterEach = ModuleWriter.computeAfterEach(data);
     this.beforeEach = ModuleWriter.computeBeforeEach(data);
     this.testCodeBlocks = TestWriter.getTestCode(data);
+  }
+
+  isWritable () {
+    return this.testCodeBlocks.length;
   }
 
   write() {
@@ -177,7 +204,8 @@ class Func extends Exportable {
 
 class ModuleWriter {
   static computeBeforeEach(data) {
-    if (!data.unknown) {
+    // TODO: use constants for each of these tag names
+    if (!data.unknown || !_.any(data.unknown, v => v.tagName === '@xBeforeEach')) {
       return 'function() {}';
     }
     const beforeEach = data.unknown.filter(v => v.tagName === '@xBeforeEach');
@@ -191,7 +219,7 @@ class ModuleWriter {
   }
 
   static computeAfterEach(data) {
-    if (!data.unknown) {
+    if (!data.unknown || !_.any(data.unknown, v => v.tagName === '@xAfterEach')) {
       return 'function() {}';
     }
     const afterEach = data.unknown.filter(v => v.tagName === '@xAfterEach');
@@ -231,12 +259,18 @@ class TestWriter {
     if (!data.unknown) {
       return '';
     }
-    return data.unknown
+    const tmp = data.unknown
       .filter(v => v.tagName === '@xTestCase')
       .map(v => v.tagValue);
+
+    return tmp;
   }
 
   static write(testCodeBlocks) {
+    if (!testCodeBlocks.length) {
+      return '';
+    }
+
     return testCodeBlocks.map((v, idx) => {
       return mustache.render(mustacheTemplates.testBlock, {
         testName: TestWriter.computeTestName(idx),
@@ -253,6 +287,11 @@ class Class extends Exportable {
     this.beforeEach = ModuleWriter.computeBeforeEach(data);
     this.methods = [];
   }
+
+  isWritable () {
+    return this.methods.length;
+  }
+
   write() {
     return ModuleWriter.write(
       this.afterEach,
@@ -261,10 +300,12 @@ class Class extends Exportable {
       this.methods.map(v => v.write()).join("\n\n")
     );
   }
-  
+
   addNode(node) {
-    invariant(node instanceof Method, "This method only accepts Method instances"); 
-    this.methods.push(node);
+    invariant(node instanceof Method, "This method only accepts Method instances");
+    if (node.isWritable()) {
+      this.methods.push(node);
+    }
   }
 }
 
@@ -278,8 +319,8 @@ class Method extends WritableTreeNode {
     );
   }
 
-  computeTestName(idx) {
-    return `test case #${idx}`;
+  isWritable () {
+    return this.testCodeBlocks.length;
   }
 
   write() {
@@ -288,8 +329,6 @@ class Method extends WritableTreeNode {
 }
 
 /**
- * TODO: make this shit a state machine
- * TODO: diff detection?
  * @param results
  * @param config
  */
@@ -299,7 +338,6 @@ function publisher(results, config) {
   // start with an empty class
   //let currentGroup = new CurrentGroup();
   results.forEach(v => {
-    // TODO: TEMPORARY
     switch (v.kind) {
       case 'file':
         if (currentFile !== null) {
@@ -322,45 +360,16 @@ function publisher(results, config) {
           currentFile.addNode(new Func(v));
         }
         break;
-      // TODO: case for function and method
     }
   });
 
   currentFile.writeToFile();
 }
 
-/**
- *   { __docId__: 1,
-    kind: 'class',
-    static: true,
-    variation: null,
-    name: 'TestFactory',
-    memberof: 'tmp/test.js',
-    longname: 'tmp/test.js~TestFactory',
-    access: null,
-    export: true,
-    importPath: 'gen-js-doctests/tmp/test.js',
-    importStyle: '{TestFactory}',
-    description: null,
-    examples: [ 'TestFactory(structure);' ],
-    lineNumber: 8,
-    unknown: [ [Object] ],
-    interface: false },
- { __docId__: 2,
-   kind: 'method',
-   static: false,
-   variation: null,
-   name: 'test',
-   memberof: 'tmp/test.js~TestFactory',
-   longname: 'tmp/test.js~TestFactory#test',
-   access: null,
-   description: null,
-   examples: [ 'TestFactory.test(structure);' ],
-   lineNumber: 14,
-   unknown: [ [Object] ],
-   params: [],
-   generator: false },
- */
+function generateEsDoc () {
+  del.sync(TEST_DIR);
+  ESDoc.generate(ESDOC_CONFIG, publisher);
+}
 
-ESDoc.generate(ESDOC_CONFIG, publisher);
+module.exports = generateEsDoc;
 
