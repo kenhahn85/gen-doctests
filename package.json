@@ -10,13 +10,19 @@
     "bluebird": "^2.9.34",
     "boom": "^2.8.0",
     "cryptiles": "^2.0.4",
+    "esdoc": "^0.4.3",
     "generate-function": "^2.0.0",
     "generate-object-property": "^1.2.0",
     "hoek": "^2.14.0",
+    "invariant": "^2.2.0",
     "js-beautify": "^1.5.10",
     "jsdoc-parse": "^1.2.6",
+    "lodash": "^4.0.0",
+    "mkdirp": "^0.5.1",
+    "mustache": "^2.2.1",
     "request": "^2.61.0",
-    "sntp": "^1.0.9"
+    "sntp": "^1.0.9",
+    "xregexp": "^3.0.0"
   },
   "devDependencies": {},
   "scripts": {

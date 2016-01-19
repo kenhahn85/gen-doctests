@@ -1,3 +1,6 @@
+/**
+ * TODO: clear tests folder on each run
+ */
 const beautify = require('js-beautify').js_beautify;
 const fs = require('fs');
 const parse = require('jsdoc-parse');
@@ -27,18 +30,34 @@ function constructTestLabel(testData) {
 }
 
 function makeTestFile(testData) {
+  console.log('testData', testData);
   if (!testData.examples) {
     return;
   }
 
   // TODO: add import here
-  fs.writeFileSync(`${constructFilename(testData)}`, beautify(`describe('${constructModuleName(testData)}', () => {
-    ${testData.examples.map(code => {
-      return `it('${constructTestLabel(testData)}', () => {
-        ${code}
-      });`;
-    }).join("\n\n")}
-  });`), {
+  fs.writeFileSync(`${constructFilename(testData)}`, constructFileCode(testData), {
     indent_size: 2
   });
+}
+
+function constructFileCode(testData) {
+  var ret;
+  if (testData.id === 'module.exports') {
+    ret = `import default from '${testData.meta.filename}'\n\n`;
+  } else if (testData.memberof) {
+    ret = `import {${testData.memberof}} from '${testData.meta.filename}'\n\n`;
+  } else {
+    ret = `import {${testData.name}} from '${testData.meta.filename}'\n\n`;
+  }
+
+  ret += `describe('${constructModuleName(testData)}', () => {
+    ${testData.examples.map(code => {
+    return `it('${constructTestLabel(testData)}', () => {
+        ${code}
+      });`;
+  }).join("\n\n")}
+  });`;
+
+  return beautify(ret);
 }
